@@ -18,6 +18,16 @@ for each game which contain the game's state, for instance things like the
 socket, the cards given, the cards still available, etc.
 """
 Game = namedtuple("Game", ["p1", "p2"])
+""" Contemplating how these namedtuple works exactly...
+    Say this 'Game' namedtuple is basically like a default - no meaningful values
+    Game - the name, how we will access the members, etc
+    p1 & p2 are the attribute members - where we store info about these members
+
+
+    Also wondering how to use the classes below
+    *rubs chin and stares off into distance* hmmmm....
+
+"""
 
 class Command(Enum):
     """
@@ -42,8 +52,14 @@ def readexactly(sock, numbytes):
     Accumulate exactly `numbytes` from `sock` and return those. If EOF is found
     before numbytes have been received, be sure to account for that here or in
     the caller.
+
+
+    Have yet to account for EOF error
     """
-    pass
+    bytes_recv = b''
+    while numbytes != len(bytes_recv):
+        bytes_recv += sock.recv(numbytes - len(bytes_recv))
+    return bytes_recv
 
 def kill_game(game):
     """
@@ -55,6 +71,15 @@ def compare_cards(card1, card2):
     """
     TODO: Given an integer card representation, return -1 for card1 < card2,
     0 for card1 = card2, and 1 for card1 > card2
+
+    What is a good way to approach this?
+
+    I'll be given a card1 from player1 and card2 from player2.
+
+    Map the values inside the card variabless to represent the actual card value (0 = 2, 1 = 3...11 (K) = 13)
+    Once I have the actual value of the cards, then I can just compare them directly
+
+    return -1, 0, 1 based on value comparison
     """
     pass
 
@@ -62,6 +87,9 @@ def deal_cards():
     """
     TODO: Randomize a deck of cards (list of ints 0..51), and return two
     26 card "hands."
+    create a deck (list???)
+    randomize the deck
+    populate player's corresponding attributes to it's Game namedtuple with half the deck --?
     """
     pass
 
@@ -70,6 +98,38 @@ def serve_game(host, port):
     TODO: Open a socket for listening for new connections on host:port, and
     perform the war protocol to serve a game of war between each client.
     This function should run forever, continually serving clients.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind((host, port))
+        sock.listen(2)
+        #"playerX" is the name of the socket where I will send/recv bytes to
+        player1, addr = sock.accept()
+        player2, addr2 = sock.accept()
+    """ I have two clients now, player1 & player2:
+    I want to get their requests for a game, first.
+    To do this, I must first begin by calling readexactly twice, and save their requests into variable
+    ****Can I hardcode '2' as the number of bytes I want to receieve exactly?
+
+    Next I will have 2 requests from 2 different clients. 
+    1st request I receive from both should be: ??????????????????????????????????????
+        b'00'   --> to indicate they both want the game
+      I will respond with:
+        b'1<1-...-26>'  --> to indicate the game has started, and your hand 
+    2nd request I receive from both should then b:
+        b'2<1byte>      --> to indicate the card the player wants to use in this round
+      I will:
+        1. Check that this card is in the corresponding player's hand
+            -Card is not a duplicate
+            -Card is not empty
+            -Card is not something you didn't originally have
+        2. Compare the card to the other player's card
+            -Go to my scoring map 
+        3. respond with:
+            b'3"W"/"L"/"D"' - to each player -----am I keeping track of score as well?
+    All subsequent requests and responses are like the 2nd, until the player's hands are empty
+    ...
+    Client/Player sends last card, receives last result, disconnects from socket
+    Server sends the last response containing last round's result, disconnect from socket
     """
     pass
 

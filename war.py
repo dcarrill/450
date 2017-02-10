@@ -119,9 +119,9 @@ def serve_game(host, port):
         b'2<1byte>      --> to indicate the card the player wants to use in this round
       I will:
         1. Check that this card is in the corresponding player's hand
-            -Card is not a duplicate
-            -Card is not empty
-            -Card is not something you didn't originally have
+            -Card is not a duplicate (something already dropped)
+            -Card is not empty (trying to give me something that DNE or out of range)
+            -Card is not something you didn't originally have (trying to give me something random)
         2. Compare the card to the other player's card
             -Go to my scoring map 
         3. respond with:

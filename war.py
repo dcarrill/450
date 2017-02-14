@@ -117,13 +117,16 @@ def serve_game(host, port):
         player2, addr2 = sock.accept()
         play1res = readexactly(player1, 2)
         play2res = readexactly(player2, 2)
-        
+
         #Make sure first request from players is 'want game'
         if play1res != b'\0\0' or play2res != b'\0\0':
+            print("Initial command was not 'want game'")
             kill_game([player1, player2])
             return
         #Players want games, deal their hands
         player_hands = deal_cards()
+        player1_hand = player_hands[0]
+        player2_hand = player_hands[1]
         player1.send(b'\1' + player_hands[0])
         player2.send(b'\1' + player_hands[1])
 
@@ -137,10 +140,18 @@ def serve_game(host, port):
         #extract the card they played
         p1_card = play1res[1]
         p2_card = play2res[1]
-        #error checking - make sure the card is in their hand
-        result = compare_cards(p1_card, p2_card)
-        #remove the card from their hands -- does the client do this?
 
+         #card is NOT in their hands
+        if player1_hand.find(p1_card) == -1 or player2_hand.find(p2_card) == -1:
+            print("Played a card not in your hand")
+            kill_game([player1, player2])
+            return
+        else: #neither were -1, meaning they both played cards within their hands
+        #replace their card with a space so we cannot index it again
+            player1_hand.replace(bytes([p1_card]), b' ')
+            player2_hand.replace(bytes([p2_card]), b' ')
+
+        result = compare_cards(p1_card, p2_card)
         if result == 0:
             player1.send(Result.DRAW)
             player2.send(Result.DRAW)
@@ -155,7 +166,7 @@ def serve_game(host, port):
             print("Error-didn't get a -1,0,1 comparison")
         #now we have 1 comparison
         #keep comparing until their hands are empty - while loop
-        #once while-loop is over, we can close connections
+        #once while-loop is over, we can close connections - kill_game()
     pass
 
 async def limit_client(host, port, loop, sem):

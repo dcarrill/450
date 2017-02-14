@@ -8,7 +8,7 @@ import logging
 import random
 import socket
 import socketserver
-import thread
+import threading
 import sys
 
 """
@@ -54,7 +54,7 @@ def readexactly(sock, numbytes):
     the caller.
 
 
-    Have yet to account for EOF error
+    Have yet to account for EOF error**************************************************
     """
     bytes_recv = b''
     while numbytes != len(bytes_recv):
@@ -122,7 +122,9 @@ def serve_game(host, port):
         if play1res != b'\0\0' or play2res != b'\0\0':
             print("Initial command was not 'want game'")
             kill_game([player1, player2])
+            sock.close()
             return
+
         #Players want games, deal their hands
         player_hands = deal_cards()
         player1_hand = player_hands[0]
@@ -130,44 +132,60 @@ def serve_game(host, port):
         player1.send(b'\1' + player_hands[0])
         player2.send(b'\1' + player_hands[1])
 
-        #Get their second request
-        play1res = readexactly(player1, 2)
-        play2res = readexactly(player2, 2)
-        #Make sure their request is 'play card'
-        if play1res[0:1] != b'\2' or play2res[0:1] != b'\2':
-            kill_game([player1, player2])
+        #start game play
+        game_round = 0
+        while game_round < 26:
+            #Get their subsequent request
+            play1res = readexactly(player1, 2)
+            play2res = readexactly(player2, 2)
 
-        #extract the card they played
-        p1_card = play1res[1]
-        p2_card = play2res[1]
+            #Make sure their request is 'play card'
+            if play1res[0:1] != b'\2' or play2res[0:1] != b'\2':
+                print("Player did not send 'Play Card' command")
+                kill_game([player1, player2])
+                sock.close()
+                return
 
-         #card is NOT in their hands
-        if player1_hand.find(p1_card) == -1 or player2_hand.find(p2_card) == -1:
-            print("Played a card not in your hand")
-            kill_game([player1, player2])
-            return
-        else: #neither were -1, meaning they both played cards within their hands
-        #replace their card with a space so we cannot index it again
+            #extract the card they played
+            print("getting their card")
+            p1_card = play1res[1]
+            p2_card = play2res[1]
+
+            #card is NOT in their hands
+            if player1_hand.find(p1_card) == -1 or player2_hand.find(p2_card) == -1:
+                print("Played a card not in your hand")
+                kill_game([player1, player2])
+                sock.close()
+                return
+            #they both played cards within their hands
+            #replace their card with a space so we cannot index it again
+            print("they played cards in their hand")
             player1_hand.replace(bytes([p1_card]), b' ')
             player2_hand.replace(bytes([p2_card]), b' ')
 
-        result = compare_cards(p1_card, p2_card)
-        if result == 0:
-            player1.send(Result.DRAW)
-            player2.send(Result.DRAW)
-        elif result == -1: #player 1 loses
-            player1.send(Result.LOSE)
-            player2.send(Result.WIN)
-        elif result == 1: #player 2 loses
-            player1.send(Result.WIN)
-            player2.send(Result.LOSE)
-        else:
-            #something else happened
-            print("Error-didn't get a -1,0,1 comparison")
-        #now we have 1 comparison
-        #keep comparing until their hands are empty - while loop
+            #determine who wins/loses
+            print("getting results...")
+            result = compare_cards(p1_card, p2_card)
+            if result == 0:
+                player1.send(b'\1')
+                player2.send(b'\1')
+            elif result == -1: #player 1 loses
+                player1.send(b'\2')
+                player2.send(b'0')
+            elif result == 1: #player 2 loses
+                player1.send(b'0')
+                player2.send(b'\2')
+            else:
+                #something else happened
+                print("Error-didn't get a -1,0,1 comparison")
+            print("in game")
+            print(game_round)
+            game_round += 1
+            print(game_round)
         #once while-loop is over, we can close connections - kill_game()
-    pass
+        kill_game([player1, player2])
+        sock.close()
+        return
 
 async def limit_client(host, port, loop, sem):
     """

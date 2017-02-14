@@ -61,37 +61,47 @@ def readexactly(sock, numbytes):
         bytes_recv += sock.recv(numbytes - len(bytes_recv))
     return bytes_recv
 
-def kill_game(game):
+#changed the arguments here________________
+def kill_game(player_list):
     """
     TODO: If either client sends a bad message, immediately nuke the game.
     """
-    pass
+    player_list[0].close()
+    player_list[1].close()
 
 def compare_cards(card1, card2):
     """
     TODO: Given an integer card representation, return -1 for card1 < card2,
     0 for card1 = card2, and 1 for card1 > card2
-
-    What is a good way to approach this?
-
-    I'll be given a card1 from player1 and card2 from player2.
-
-    Map the values inside the card variabless to represent the actual card value (0 = 2, 1 = 3...11 (K) = 13)
-    Once I have the actual value of the cards, then I can just compare them directly
-
-    return -1, 0, 1 based on value comparison
+    card1 = player1's card
+    card2 = player2's card
     """
-    pass
+    p1_result = card1 % 13
+    p2_result = card2 % 13
+
+    if p1_result < p2_result:
+        return -1
+    elif p1_result > p2_result:
+        return 1
+    else:
+        return 0
 
 def deal_cards():
     """
-    TODO: Randomize a deck of cards (list of ints 0..51), and return two
-    26 card "hands."
-    create a deck (list???)
-    randomize the deck
-    populate player's corresponding attributes to it's Game namedtuple with half the deck --?
+    TODO:
+    1. create a deck of 0 - 51 cards - list of bytes?
+    2. randomize the deck
+    3. split the deck in half
+    4. return a single list of two lists
     """
-    pass
+    deck = list(range(0, 52))
+    random.shuffle(deck)
+    first_half = deck[0:26]
+    second_half = deck[26:52]
+    player_hands = []
+    player_hands.append(bytes(first_half))
+    player_hands.append(bytes(second_half))
+    return player_hands
 
 def serve_game(host, port):
     """
@@ -105,32 +115,47 @@ def serve_game(host, port):
         #"playerX" is the name of the socket where I will send/recv bytes to
         player1, addr = sock.accept()
         player2, addr2 = sock.accept()
-    """ I have two clients now, player1 & player2:
-    I want to get their requests for a game, first.
-    To do this, I must first begin by calling readexactly twice, and save their requests into variable
-    ****Can I hardcode '2' as the number of bytes I want to receieve exactly?
+        play1res = readexactly(player1, 2)
+        play2res = readexactly(player2, 2)
+        
+        #Make sure first request from players is 'want game'
+        if play1res != b'\0\0' or play2res != b'\0\0':
+            kill_game([player1, player2])
+            return
+        #Players want games, deal their hands
+        player_hands = deal_cards()
+        player1.send(b'\1' + player_hands[0])
+        player2.send(b'\1' + player_hands[1])
 
-    Next I will have 2 requests from 2 different clients. 
-    1st request I receive from both should be: ??????????????????????????????????????
-        b'00'   --> to indicate they both want the game
-      I will respond with:
-        b'1<1-...-26>'  --> to indicate the game has started, and your hand 
-    2nd request I receive from both should then b:
-        b'2<1byte>      --> to indicate the card the player wants to use in this round
-      I will:
-        1. Check that this card is in the corresponding player's hand
-            -Card is not a duplicate (something already dropped)
-            -Card is not empty (trying to give me something that DNE or out of range)
-            -Card is not something you didn't originally have (trying to give me something random)
-        2. Compare the card to the other player's card
-            -Go to my scoring map 
-        3. respond with:
-            b'3"W"/"L"/"D"' - to each player -----am I keeping track of score as well?
-    All subsequent requests and responses are like the 2nd, until the player's hands are empty
-    ...
-    Client/Player sends last card, receives last result, disconnects from socket
-    Server sends the last response containing last round's result, disconnect from socket
-    """
+        #Get their second request
+        play1res = readexactly(player1, 2)
+        play2res = readexactly(player2, 2)
+        #Make sure their request is 'play card'
+        if play1res[0:1] != b'\2' or play2res[0:1] != b'\2':
+            kill_game([player1, player2])
+
+        #extract the card they played
+        p1_card = play1res[1]
+        p2_card = play2res[1]
+        #error checking - make sure the card is in their hand
+        result = compare_cards(p1_card, p2_card)
+        #remove the card from their hands -- does the client do this?
+
+        if result == 0:
+            player1.send(Result.DRAW)
+            player2.send(Result.DRAW)
+        elif result == -1: #player 1 loses
+            player1.send(Result.LOSE)
+            player2.send(Result.WIN)
+        elif result == 1: #player 2 loses
+            player1.send(Result.WIN)
+            player2.send(Result.LOSE)
+        else:
+            #something else happened
+            print("Error-didn't get a -1,0,1 comparison")
+        #now we have 1 comparison
+        #keep comparing until their hands are empty - while loop
+        #once while-loop is over, we can close connections
     pass
 
 async def limit_client(host, port, loop, sem):

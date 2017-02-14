@@ -18,16 +18,6 @@ for each game which contain the game's state, for instance things like the
 socket, the cards given, the cards still available, etc.
 """
 Game = namedtuple("Game", ["p1", "p2"])
-""" Contemplating how these namedtuple works exactly...
-    Say this 'Game' namedtuple is basically like a default - no meaningful values
-    Game - the name, how we will access the members, etc
-    p1 & p2 are the attribute members - where we store info about these members
-
-
-    Also wondering how to use the classes below
-    *rubs chin and stares off into distance* hmmmm....
-
-"""
 
 class Command(Enum):
     """
@@ -61,10 +51,12 @@ def readexactly(sock, numbytes):
         bytes_recv += sock.recv(numbytes - len(bytes_recv))
     return bytes_recv
 
-#changed the arguments here________________
+#changed the arguments here************************************************************
 def kill_game(player_list):
     """
     TODO: If either client sends a bad message, immediately nuke the game.
+
+    Am I also nuking the server's socket??? ******************************************
     """
     player_list[0].close()
     player_list[1].close()
@@ -108,34 +100,70 @@ def serve_game(host, port):
     TODO: Open a socket for listening for new connections on host:port, and
     perform the war protocol to serve a game of war between each client.
     This function should run forever, continually serving clients.
+
+
+    Threading: 
+    ~~~~~~~~~
+    I know I will need:
+    t.Thread(func, args_to_func)
+    t.start() -->RuntimeError if called more than once on the same thread object.
+    t.join() --> RuntimeError if joining a thread that causes deadlock or trying to access before it's started
     """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind((host, port))
         sock.listen(2)
-        #"playerX" is the name of the socket where I will send/recv bytes to
         player1, addr = sock.accept()
         player2, addr2 = sock.accept()
         play1res = readexactly(player1, 2)
         play2res = readexactly(player2, 2)
-
         #Make sure first request from players is 'want game'
         if play1res != b'\0\0' or play2res != b'\0\0':
             print("Initial command was not 'want game'")
             kill_game([player1, player2])
-            sock.close()
             return
+        """
+        The following chunk of code (up the asterisk line) is what I think should be a new function (game_play).
+        Only arguments needed is the player sockets --> could be single argument, list.
+        Basic idea (for creating a single thread)
 
-        #Players want games, deal their hands
+        while <cond>:
+            <<listen...accept*2
+            get first request from each client >>
+            
+            if both requests are NOT  "want game"
+                kill everything
+            #otherwise, create new thread
+            t = Thread(game_play, [player1, player2])
+            t.start()
+            t.join()
+            <return from serve_game>
+
+        Questions:
+        >>1) Not within context: Do I need "addr/addr2" for anything? 
+            1.1) Also, using "with" means I don't have to call "sock.close()"??
+        >>2) Can I use the .listen(), .accept() over and over again in a loop like that?
+        >>3) If I spawn off threads, can my server still send/receive responses/requests from the clients in those threads?
+        >>4) I don't HAVE to define a new subclass for the Thread class, do I? 
+        """
         player_hands = deal_cards()
         player1_hand = player_hands[0]
         player2_hand = player_hands[1]
+
+        numhands = len(player_hands)
+        numcards1 = len(player_hands[0])
+        numcards2 = len(player_hands[1])
+
+        #I did not give them the correct number of cards
+        if numhands != 2 or numcards1 != 26 or numcards2 != 26:
+            logging.debug("Hands: %d\tP1 cards: %d\tP2 cards: %d", numhands, numcards1, numcards2)
+            kill_game([player1, player2])
+            return
+        #Dealing hand to each - start of game
         player1.send(b'\1' + player_hands[0])
         player2.send(b'\1' + player_hands[1])
 
-        #start game play
         game_round = 0
         while game_round < 26:
-            #Get their subsequent request
             play1res = readexactly(player1, 2)
             play2res = readexactly(player2, 2)
 
@@ -143,11 +171,8 @@ def serve_game(host, port):
             if play1res[0:1] != b'\2' or play2res[0:1] != b'\2':
                 print("Player did not send 'Play Card' command")
                 kill_game([player1, player2])
-                sock.close()
                 return
 
-            #extract the card they played
-            print("getting their card")
             p1_card = play1res[1]
             p2_card = play2res[1]
 
@@ -155,37 +180,29 @@ def serve_game(host, port):
             if player1_hand.find(p1_card) == -1 or player2_hand.find(p2_card) == -1:
                 print("Played a card not in your hand")
                 kill_game([player1, player2])
-                sock.close()
                 return
-            #they both played cards within their hands
-            #replace their card with a space so we cannot index it again
-            print("they played cards in their hand")
+
             player1_hand.replace(bytes([p1_card]), b' ')
             player2_hand.replace(bytes([p2_card]), b' ')
 
-            #determine who wins/loses
-            print("getting results...")
             result = compare_cards(p1_card, p2_card)
             if result == 0:
-                player1.send(b'\1')
-                player2.send(b'\1')
+                player1.send(b'\3\1')
+                player2.send(b'\3\1')
             elif result == -1: #player 1 loses
-                player1.send(b'\2')
-                player2.send(b'0')
+                player1.send(b'\3\2')
+                player2.send(b'\3\0')
             elif result == 1: #player 2 loses
-                player1.send(b'0')
-                player2.send(b'\2')
+                player1.send(b'\3\0')
+                player2.send(b'\3\2')
             else:
-                #something else happened
-                print("Error-didn't get a -1,0,1 comparison")
-            print("in game")
-            print(game_round)
+                logging.debug("Game result error, got: %d", result)
+                kill_game([player1, player2])
+                return
             game_round += 1
-            print(game_round)
-        #once while-loop is over, we can close connections - kill_game()
-        kill_game([player1, player2])
-        sock.close()
-        return
+    kill_game([player1, player2])
+    #**********************************************************************(probably gonna need it's own return though)
+    return
 
 async def limit_client(host, port, loop, sem):
     """

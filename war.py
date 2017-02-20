@@ -17,8 +17,10 @@ up being faster. It would be a good idea to keep objects in each of these
 for each game which contain the game's state, for instance things like the
 socket, the cards given, the cards still available, etc.
 """
-Game = namedtuple("Game", ["p1", "p2"])
-PLAYERS = asyncio.Queue(maxsize=2)
+Game = namedtuple("Game", ['p1', 'p2'])
+Players = namedtuple("players", ['hand1', 'hand2'])
+PLAYERS = asyncio.Queue()
+PL_LIST = []
 
 class Command(Enum):
     """
@@ -38,20 +40,9 @@ class Result(Enum):
     DRAW = 1
     LOSE = 2
 
-def readexactly(sock, numbytes):
-    """
-    Accumulate exactly `numbytes` from `sock` and return those. If EOF is found
-    before numbytes have been received, be sure to account for that here or in
-    the caller.
-    """
-    bytes_recv = b''
-    while numbytes != len(bytes_recv):
-        bytes_recv += sock.recv(numbytes - len(bytes_recv))
-    return bytes_recv
-
 def kill_game(player_list):
     """
-    Closes the player (client) connections on error.
+    Closes the player's connections upon error.
     """
     player_list[0].close()
     player_list[1].close()
@@ -75,10 +66,10 @@ def compare_cards(card1, card2):
 
 def deal_cards():
     """
-    1. create a deck of 0 - 51 cards - list of bytes?
-    2. randomize the deck
-    3. split the deck in half
-    4. return a single list of two lists
+    Create a deck of 0 - 51 ints (each rep. a card/suit combo)
+    Shuffle the deck
+    Split the deck into halfs (one for each player)
+    Create a list of the lists of cards
     """
     deck = list(range(0, 52))
     random.shuffle(deck)
@@ -90,114 +81,110 @@ def deal_cards():
     return player_hands
 
 def serve_game(reader, writer):
+    """Create a player list so that we can enummerate two at a time
+    Once we have two players, populate a Game-tuple for the pair
+        Create a Task, which calls game_play function with the Game-tuple info
+        Prints to ensure that round between those players is over.
     """
-    Create task to handle initial client connection
-    """
-    player_task = asyncio.Task(start_player(reader, writer))
-    print("after task assign")
-    try:
-        PLAYERS.put_nowait(player_task)
-    except asyncio.QueueFull:
-        logging.error("Queue is full...")
-    #If we have two players, let's launch a game.
-    if PLAYERS.qsize() == 2:
-        print("We have two connected clients!")
-        game_play()
+    PL_LIST.append((reader, writer))
 
-async def start_player(reader, writer):
-    """
-    Get first response from Player, make sure they want to play game.
-    """
-    response = await reader.read(2)
-    print("response or something")
-    print(reader)
-    if response != b'\0\0':
-        logging.debug("If you don't want to play, why are you here?")
-    return (reader, writer)
+    if len(PL_LIST) >= 2:
+        gameround = Game([PL_LIST.pop()], [PL_LIST.pop()])
+        single_game = asyncio.Task(game_play(gameround))
+        try:
+            PLAYERS.put_nowait(gameround)
+        except asyncio.QueueFull:
+            logging.error("Queue is full...")
+        def task_done(task):
+            """Simply prints that the task is done """
+            print("Task{0} is complete".format(task))
+        single_game.add_done_callback(task_done)
 
-def game_play():
-    print("inside gameplay")
-    """ Play the game
-    'Pop' the first two clients off the list
-    """
-    player1 = PLAYERS.get() #format: (reader, writer)
-    player2 = PLAYERS.get()
-    #Both players pop off - their first read occurs
-    print("Players got popped off")
 
-"""
-    #begin gameplay
-    #get their initial responses
-    play1res = player1.read(2)
-    play2res = player2.read(2)
+async def game_play(gameround):
+    """ This is where the actual game play takes place
+    """
+    #Get the players hands
+    player1 = gameround.p1
+    p1_reader = player1[0][0]
+    p1_writer = player1[0][1]
+    player2 = gameround.p2
+    p2_reader = player2[0][0]
+    p2_writer = player2[0][1]
+
+    #Get the player's initial responses
+    p1_res = await p1_reader.readexactly(2)
+    p2_res = await p2_reader.readexactly(2)
 
     #Make sure first request from players is 'want game'
-    if play1res != b'\0\0' or play2res != b'\0\0':
+    if p1_res != b'\0\0' or p2_res != b'\0\0':
         logging.debug("Didn't really want to play the game, huh?")
-        kill_game([player1, player2])
+        kill_game([p1_writer, p2_writer])
         return
-
     #Otherwise the players sent a valid intial responses
     #Deal player hands
     player_hands = deal_cards()
-    player1_hand = player_hands[0]
-    player2_hand = player_hands[1]
+    p_cards = Players(player_hands[0], player_hands[1])
+    p_hand1 = p_cards[0]
+    p_hand2 = p_cards[1]
 
     #Check for server errors
     numhands = len(player_hands)
-    numcards1 = len(player_hands[0])
-    numcards2 = len(player_hands[1])
+    numcards1 = len(p_hand1)
+    numcards2 = len(p_hand2)
     #Server did not give them the correct number of cards
     if numhands != 2 or numcards1 != 26 or numcards2 != 26:
         logging.debug("Server's Mistake in dealing!")
-        kill_game([player1, player2])
+        kill_game([p1_writer, p2_writer])
         return
     #Dealing hand to each - start of game
-    player1.writer.write(b'\1' + player_hands[0])
-    player2.writer.write(b'\1' + player_hands[1])
+    p1_writer.write(b'\1' + p_hand1)
+    p2_writer.write(b'\1' + p_hand2)
 
     #Card comparisons
     game_round = 0
     while game_round < 26:
-        play1res = player1.reader.read(2)
-        play2res = player2.reader.read(2)
+        play1res = await p1_reader.readexactly(2)
+        play2res = await p2_reader.readexactly(2)
 
         #Make sure their request is 'play card'
-        if play1res[0:1] != b'\2' or play2res[0:1] != b'\2':
+        if play1res[0] != 2 or play2res[0] != 2:
             logging.debug("Player did not send 'Play Card' command")
-            kill_game([player1, player2])
+            kill_game([p1_writer, p2_writer])
             return
-
         p1_card = play1res[1]
         p2_card = play2res[1]
 
         #card is NOT in their hands
-        if player1_hand.find(p1_card) == -1 or player2_hand.find(p2_card) == -1:
+        b_card1 = bytes([p1_card])
+        b_card2 = bytes([p2_card])
+
+        if p_hand1.find(b_card1) == -1 or p_hand2.find(b_card2) == -1:
             logging.debug("Played a card not in your hand")
-            kill_game([player1, player2])
+            kill_game([p1_writer, p2_writer])
             return
 
-        player1_hand.replace(bytes([p1_card]), b' ')
-        player2_hand.replace(bytes([p2_card]), b' ')
+        #not really performing this, but oh well
+        p_hand1.replace(b_card1, b'--')
+        p_hand2.replace(b_card2, b'--')
 
         result = compare_cards(p1_card, p2_card)
         if result == 0:
-            player1.writer.write(b'\3\1')
-            player2.writer.write(b'\3\1')
+            p1_writer.write(b'\3\1')
+            p2_writer.write(b'\3\1')
         elif result == -1: #player 1 loses
-            player1.writer.write(b'\3\2')
-            player2.writer.write(b'\3\0')
+            p1_writer.write(b'\3\2')
+            p2_writer.write(b'\3\0')
         elif result == 1: #player 2 loses
-            player1.writer.write(b'\3\0')
-            player2.writer.write(b'\3\2')
+            p1_writer.write(b'\3\0')
+            p2_writer.write(b'\3\2')
         else:
             logging.debug("Game result error, got: %d", result)
             kill_game([player1, player2])
             return
         game_round += 1
-    kill_game([player1, player2])
+    kill_game([p1_writer, p2_writer])
     return
-    """
 
 async def limit_client(host, port, loop, sem):
     """

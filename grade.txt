@@ -1,0 +1,8 @@
+5 / 5: Two clients successfully completed a game with the server in under 3 seconds.
+1 / 1: The server correctly handled a game with a buggy client, and continued functioning as expected afterwards.
+2 / 2: Successfully completed multiple games at the same time.
+2 / 2: Student server appears to be handling multiple clients w/o using threads.
+1 / 1: Correctly finished a correct game after handling 5 buggy games, simultaneously.
+0 / 1: Code does not pass PEP8 test.
+---
+Total: 11 / 10
